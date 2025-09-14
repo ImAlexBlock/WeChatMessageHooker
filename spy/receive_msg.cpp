@@ -13,14 +13,12 @@
 
 #include <stdlib.h>
 #include "nlohmann/json.hpp"
-#include "curl/curl.h"
-#pragma comment(lib, "libcurl.lib")
 
 // Defined in spy.cpp
 extern QWORD g_WeChatWinDllAddr;
 
 // 接收消息call所在地址
-#define OS_RECV_MSG_CALL    0x2141E80
+#define OS_RECV_MSG_CALL    0x214C6C0
 
 // 参数 消息ID 相对地址
 #define OS_RECV_MSG_ID      0x30
@@ -108,51 +106,25 @@ static string to_string(WxMsg_t wxMsg) {
 
 static void notice(string content)
 {
-    CURL* curl;
-    CURLcode res;
-    long res_code = 0;
-    const char* postContent = content.c_str();
-    struct curl_slist* header = NULL;
-    char url[MAX_PATH];
+    LOG_INFO("Message received: {}", content);
     
-    res = curl_global_init(CURL_GLOBAL_DEFAULT);
-    if (res != CURLE_OK)
-        fprintf(stderr, "curl_global_init() failed: %s\n",
-            curl_easy_strerror(res));
-    curl = curl_easy_init();
-    if (curl) {
-        LOG_INFO("Message received: {}", content);
-
-        strcpy_s(url, MAX_PATH, baseUrl);
-        strcat_s(url, MAX_PATH, "api/receive");
-
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        
-        curl_easy_setopt(curl, CURLOPT_POST, 1L);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postContent);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(postContent));
-
-        header = curl_slist_append(header, "Accept: */*");
-        header = curl_slist_append(header, "Content-Type: application/json; charset=utf-8");
-        header = curl_slist_append(header, "Connection: Close");
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header);
-        curl_easy_setopt(curl, CURLOPT_HEADER, 0L);
-
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, "curl/8.10.1");
-
-        res = curl_easy_perform(curl);
-        if (res != CURLE_OK)
-            fprintf(stderr, "curl_easy_perform() failed: %s\n",
-                curl_easy_strerror(res));
-        res = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res_code);
-
-        curl_slist_free_all(header);
-        curl_easy_cleanup(curl);
+    // 查找Python网关窗口
+    HWND hwndGateway = FindWindowA(NULL, "WeChatMessageGateway");
+    if (hwndGateway == NULL) {
+        LOG_WARN("Failed to find gateway window");
+        return;
     }
-    curl_global_cleanup();
+    
+    // 使用WM_COPYDATA消息发送JSON数据
+    COPYDATASTRUCT cds;
+    cds.dwData = 0;  // 自定义数据标识
+    cds.cbData = (DWORD)content.length() + 1;  // 包括终止符
+    cds.lpData = (PVOID)content.c_str();
+    
+    // 发送消息
+    if (!SendMessage(hwndGateway, WM_COPYDATA, (WPARAM)NULL, (LPARAM)&cds)) {
+        LOG_ERROR("Failed to send message to gateway");
+    }
 }
 
 static QWORD DispatchMsg(QWORD arg1, QWORD arg2)
@@ -160,15 +132,24 @@ static QWORD DispatchMsg(QWORD arg1, QWORD arg2)
     WxMsg_t wxMsg = { 0 };
     string str;
     try {
+        LOG_DEBUG("DispatchMsg started");
         wxMsg.id      = GET_QWORD(arg2 + OS_RECV_MSG_ID);
+        LOG_DEBUG("Got message ID");
         wxMsg.type    = GET_DWORD(arg2 + OS_RECV_MSG_TYPE);
+        LOG_DEBUG("Got message type");
         wxMsg.is_self = GET_DWORD(arg2 + OS_RECV_MSG_SELF);
+        LOG_DEBUG("Got message is_self");
         wxMsg.ts      = GET_DWORD(arg2 + OS_RECV_MSG_TS);
+        LOG_DEBUG("Got message timestamp");
         wxMsg.content = GetStringByWstrAddr(arg2 + OS_RECV_MSG_CONTENT);
+        LOG_DEBUG("Got message content");
         wxMsg.sign    = GetStringByWstrAddr(arg2 + OS_RECV_MSG_SIGN);
+        LOG_DEBUG("Got message sign");
         wxMsg.xml     = GetStringByWstrAddr(arg2 + OS_RECV_MSG_XML);
+        LOG_DEBUG("Got message xml");
 
         string roomid = GetStringByWstrAddr(arg2 + OS_RECV_MSG_ROOMID);
+        LOG_DEBUG("Got room ID");
         wxMsg.roomid  = roomid;
         if (roomid.find("@chatroom") != string::npos) { // 群 ID 的格式为 xxxxxxxxxxx@chatroom
             wxMsg.is_group = true;
@@ -185,17 +166,23 @@ static QWORD DispatchMsg(QWORD arg1, QWORD arg2)
                 wxMsg.sender = roomid;
             }
         }
+        LOG_DEBUG("Got message sender");
         wxMsg.thumb = GetStringByWstrAddr(arg2 + OS_RECV_MSG_THUMB);
+        LOG_DEBUG("Got message thumb");
         wxMsg.extra = GetStringByWstrAddr(arg2 + OS_RECV_MSG_EXTRA);
+        LOG_DEBUG("Got message extra");
         
         str = to_string(wxMsg);
+        LOG_DEBUG("Converted to string");
         notice(str);
+        LOG_DEBUG("Sent notice");
     } catch (const std::exception &e) {
         LOG_ERROR(GB2312ToUtf8(e.what()).c_str());
     } catch (...) {
         LOG_ERROR("Unknow exception.");
     }
 
+    LOG_DEBUG("DispatchMsg finished");
     return realRecvMsg(arg1, arg2);
 }
 

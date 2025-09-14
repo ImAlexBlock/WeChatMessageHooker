@@ -35,12 +35,13 @@ void InitSpy(LPVOID args)
     LOG_INFO("WeChat version: {}", Wstring2String(version).c_str());
     if (!IsWxVersionMatched(version)) {
         LOG_ERROR("不支持当前版本");
-        // MessageBox(NULL, L"不支持当前版本", L"错误", 0);
+         MessageBox(NULL, L"不支持当前版本", L"错误", 0);
         return;
     }
 
     ListenMessage();
     LOG_INFO("注入成功");
+    MessageBox(NULL, L"我进来了！！", L"微信™", 0);
 }
 
 void CleanupSpy()
